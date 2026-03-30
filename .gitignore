@@ -1,0 +1,12 @@
+# Dependencies
+node_modules/
+
+# Environment variables (Sensitive Data!)
+.env
+
+# System Files (Windows junk)
+.DS_Store
+Thumbs.db
+
+# Logs
+npm-debug.log
