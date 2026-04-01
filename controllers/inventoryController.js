@@ -2,19 +2,17 @@ const pool = require("../config/db");
 
 const getInventory = async (req, res) => {
   try {
-    // Default to page 1, 10 items per page if not specified
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
 
     const [rows] = await pool.query(
-      "SELECT * FROM library_inventory LIMIT ? OFFSET ?",
+      "SELECT * FROM library_inventory WHERE is_active = TRUE LIMIT ? OFFSET ?",
       [limit, offset]
     );
 
-    // Also get total count for the frontend to know how many pages exist
     const [countResult] = await pool.query(
-      "SELECT COUNT(*) as total FROM library_inventory"
+      "SELECT COUNT(*) as total FROM library_inventory WHERE is_active = TRUE"
     );
 
     res.json({
@@ -30,22 +28,36 @@ const getInventory = async (req, res) => {
   }
 };
 
-const deleteBook = async (req, res) => {
-  const { inventoryId } = req.body; // 'userId' is also required in body for the checkLibrarian middleware
+const addBook = async (req, res) => {
+  const { title, author, isbn, category, total_stock } = req.body;
 
   try {
-    await pool.query("DELETE FROM library_inventory WHERE inventory_id = ?", [
-      inventoryId,
-    ]);
-    res.json({ message: "Item deleted from database." });
+    await pool.query(
+      "INSERT INTO library_inventory (title, author, isbn, category, total_stock, available_stock) VALUES (?, ?, ?, ?, ?, ?)",
+      [title, author, isbn, category, total_stock, total_stock]
+    );
+
+    res
+      .status(201)
+      .json({ message: `Success! '${title}' added to inventory.` });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
 
-const PORT = 3000;
-app.listen(PORT, () => {
-  console.log(`Advanced Library API running on http://localhost:${PORT}`);
-});
+const deleteBook = async (req, res) => {
+  const { inventoryId } = req.params; // Fixed: was req.body
 
-module.exports = { getInventory, deleteBook };
+  try {
+    await pool.query(
+      "UPDATE library_inventory SET is_active = FALSE WHERE inventory_id = ?",
+      [inventoryId]
+    );
+
+    res.json({ message: "Item archived successfully (Soft Delete)." });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+module.exports = { getInventory, addBook, deleteBook };

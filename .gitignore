@@ -10,3 +10,7 @@ Thumbs.db
 
 # Logs
 npm-debug.log
+
+pack.cjs
+
+packed_codebase.txt

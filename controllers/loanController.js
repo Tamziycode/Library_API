@@ -1,4 +1,5 @@
 const pool = require("../config/db");
+
 const borrowBook = async (req, res) => {
   const { borrowerId, inventoryId } = req.body;
   const connection = await pool.getConnection();
@@ -6,16 +7,15 @@ const borrowBook = async (req, res) => {
   try {
     await connection.beginTransaction();
 
-    // Check stock
     const [items] = await connection.query(
       "SELECT available_stock, title FROM library_inventory WHERE inventory_id = ? FOR UPDATE",
       [inventoryId]
     );
+
     if (items.length === 0 || items[0].available_stock < 1) {
       throw new Error("Item out of stock or does not exist.");
     }
 
-    // Create Loan (Due in 14 days)
     const dueDate = new Date();
     dueDate.setDate(dueDate.getDate() + 14);
 
@@ -24,7 +24,6 @@ const borrowBook = async (req, res) => {
       [borrowerId, inventoryId, dueDate]
     );
 
-    // Decrease stock
     await connection.query(
       "UPDATE library_inventory SET available_stock = available_stock - 1 WHERE inventory_id = ?",
       [inventoryId]
@@ -40,7 +39,6 @@ const borrowBook = async (req, res) => {
   }
 };
 
-// --- ROUTE 3: Return (With Late Fees) ---
 const returnBook = async (req, res) => {
   const { borrowerId, inventoryId } = req.body;
   const connection = await pool.getConnection();
@@ -48,7 +46,6 @@ const returnBook = async (req, res) => {
   try {
     await connection.beginTransaction();
 
-    // Find the active loan
     const [loans] = await connection.query(
       'SELECT loan_id, due_date FROM loan_records WHERE borrower_id = ? AND inventory_id = ? AND status = "active" FOR UPDATE',
       [borrowerId, inventoryId]
@@ -60,7 +57,6 @@ const returnBook = async (req, res) => {
     const now = new Date();
     const dueDate = new Date(loan.due_date);
 
-    // Calculate Late Fee ($0.50 per day late)
     let fee = 0.0;
     if (now > dueDate) {
       const diffTime = Math.abs(now - dueDate);
@@ -68,13 +64,11 @@ const returnBook = async (req, res) => {
       fee = diffDays * 0.5;
     }
 
-    // Close Loan
     await connection.query(
       'UPDATE loan_records SET status = "returned", returned_at = NOW(), late_fee = ? WHERE loan_id = ?',
       [fee, loan.loan_id]
     );
 
-    // Increase Stock
     await connection.query(
       "UPDATE library_inventory SET available_stock = available_stock + 1 WHERE inventory_id = ?",
       [inventoryId]
@@ -97,35 +91,73 @@ const returnBook = async (req, res) => {
   }
 };
 
-// --- ROUTE 4: Reserve Book (New Feature) ---
+// transaction + duplicate reservation guard
 const reserveBook = async (req, res) => {
   const { borrowerId, inventoryId } = req.body;
+  const connection = await pool.getConnection();
 
   try {
-    // Check if item is actually out of stock
-    const [items] = await pool.query(
-      "SELECT available_stock FROM library_inventory WHERE inventory_id = ?",
+    await connection.beginTransaction();
+
+    const [items] = await connection.query(
+      "SELECT available_stock FROM library_inventory WHERE inventory_id = ? FOR UPDATE",
       [inventoryId]
     );
 
     if (items.length > 0 && items[0].available_stock > 0) {
+      await connection.rollback();
       return res
         .status(400)
         .json({ message: "Item is currently available. Just borrow it!" });
     }
 
-    // Create reservation
-    await pool.query(
+    // Check for existing pending reservation to prevent duplicates
+    const [existing] = await connection.query(
+      'SELECT reservation_id FROM reservations WHERE borrower_id = ? AND inventory_id = ? AND status = "pending"',
+      [borrowerId, inventoryId]
+    );
+
+    if (existing.length > 0) {
+      await connection.rollback();
+      return res.status(400).json({
+        message: "You already have a pending reservation for this item.",
+      });
+    }
+
+    await connection.query(
       "INSERT INTO reservations (borrower_id, inventory_id) VALUES (?, ?)",
       [borrowerId, inventoryId]
     );
 
+    await connection.commit();
     res.json({
       message: "Reservation placed. We will notify you when it is available.",
     });
+  } catch (error) {
+    await connection.rollback();
+    res.status(500).json({ error: error.message });
+  } finally {
+    connection.release();
+  }
+};
+
+// borrowerId now comes from params, not open query string
+const myLoans = async (req, res) => {
+  const { borrowerId } = req.params;
+
+  try {
+    const [loans] = await pool.query(
+      `SELECT l.loan_id, i.title, l.borrowed_at, l.due_date 
+       FROM loan_records l 
+       JOIN library_inventory i ON l.inventory_id = i.inventory_id 
+       WHERE l.borrower_id = ? AND l.status = 'active'`,
+      [borrowerId]
+    );
+
+    res.json({ activeLoans: loans });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
 
-module.exports = { reserveBook, borrowBook, returnBook };
+module.exports = { reserveBook, borrowBook, returnBook, myLoans };
