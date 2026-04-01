@@ -1,3 +1,5 @@
+const pool = require("../config/db");
+
 const getInventory = async (req, res) => {
   try {
     // Default to page 1, 10 items per page if not specified
