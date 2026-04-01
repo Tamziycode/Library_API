@@ -12,6 +12,12 @@ app.use("/inventory", inventoryRoutes);
 app.use("/loan", loanRoutes);
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Library API running on http://localhost:${PORT}`);
-});
+
+// Only bind to port if run directly, not when imported by tests
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Library API running on http://localhost:${PORT}`);
+  });
+}
+
+module.exports = app;
